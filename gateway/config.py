@@ -1816,13 +1816,25 @@ def _apply_env_overrides(config: GatewayConfig) -> None:
         discover_plugins()  # idempotent
         from gateway.platform_registry import platform_registry
         for entry in platform_registry.plugin_entries():
+            platform = Platform(entry.name)
+            existing = config.platforms.get(platform)
+            if existing is not None and not existing.enabled:
+                # Respect explicit YAML/config disables.  check_fn() only means
+                # adapter dependencies are importable; for many platform plugins
+                # (e.g. Discord) credentials are validated by is_connected().
+                continue
             try:
-                if not entry.check_fn():
+                if entry.is_connected is not None:
+                    configured = entry.is_connected(existing)
+                elif entry.validate_config is not None and existing is not None:
+                    configured = entry.validate_config(existing)
+                else:
+                    configured = entry.check_fn()
+                if not configured:
                     continue
             except Exception as e:
-                logger.debug("check_fn for %s raised: %s", entry.name, e)
+                logger.debug("plugin enable check for %s raised: %s", entry.name, e)
                 continue
-            platform = Platform(entry.name)
             if platform not in config.platforms:
                 config.platforms[platform] = PlatformConfig()
             config.platforms[platform].enabled = True
