@@ -2267,6 +2267,36 @@ class TestPtyWebSocket:
                 pass
         assert captured.get("resume") == "sess-42"
 
+    def test_websocket_gate_allows_remote_clients_when_insecure_enabled(self, monkeypatch):
+        """Non-loopback dashboard binds require --insecure at startup.
+
+        The WebSocket endpoints must honor that same explicit opt-in; otherwise
+        Tailscale/remote dashboard pages load over HTTP but every chat socket
+        closes with 403 before it can accept.
+        """
+        class Client:
+            host = "100.79.68.45"
+
+        class FakeWebSocket:
+            client = Client()
+
+        monkeypatch.setattr(self.ws_module.app.state, "bound_host", "hermes.tail9d0973.ts.net", raising=False)
+        monkeypatch.setattr(self.ws_module.app.state, "allow_public", True, raising=False)
+
+        assert self.ws_module._ws_client_is_allowed(FakeWebSocket()) is True
+
+    def test_websocket_gate_rejects_remote_clients_without_insecure(self, monkeypatch):
+        class Client:
+            host = "100.79.68.45"
+
+        class FakeWebSocket:
+            client = Client()
+
+        monkeypatch.setattr(self.ws_module.app.state, "bound_host", "127.0.0.1", raising=False)
+        monkeypatch.setattr(self.ws_module.app.state, "allow_public", False, raising=False)
+
+        assert self.ws_module._ws_client_is_allowed(FakeWebSocket()) is False
+
     def test_channel_param_propagates_sidecar_url(self, monkeypatch):
         """When /api/pty is opened with ?channel=, the PTY child gets a
         HERMES_TUI_SIDECAR_URL env var pointing back at /api/pub on the

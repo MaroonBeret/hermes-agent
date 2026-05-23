@@ -3296,18 +3296,27 @@ _VALID_CHANNEL_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost", "testclient"})
 
 
-def _is_public_bind() -> bool:
-    """True when bound to all-interfaces (operator used --insecure)."""
-    return getattr(app.state, "bound_host", "") in {"0.0.0.0", "::"}
+def _remote_ws_clients_allowed() -> bool:
+    """True when the operator explicitly allowed a non-loopback dashboard bind.
+
+    ``start_server(..., allow_public=True)`` is wired to the CLI's
+    ``--insecure`` flag.  That flag is required for any non-loopback host,
+    including a single Tailscale/MagicDNS hostname.  WebSocket endpoints must
+    honor the same decision as HTTP routes; otherwise the SPA can load but all
+    dashboard chat sockets fail with HTTP 403 behind Tailscale Serve.
+    """
+    return bool(getattr(app.state, "allow_public", False)) or getattr(
+        app.state, "bound_host", ""
+    ) in {"0.0.0.0", "::"}
 
 
 def _ws_client_is_allowed(ws: "WebSocket") -> bool:
     """Check if the WebSocket client IP is acceptable.
 
-    Allows loopback always; allows any IP when bound to all-interfaces
-    (--insecure mode, guarded by session token auth).
+    Allows loopback always; allows non-loopback clients only when the operator
+    explicitly used --insecure / allow_public for the dashboard bind.
     """
-    if _is_public_bind():
+    if _remote_ws_clients_allowed():
         return True
     client_host = ws.client.host if ws.client else ""
     if not client_host:
@@ -4639,8 +4648,12 @@ def start_server(
     # Host headers against it. Defends against DNS rebinding (GHSA-ppp5-vxwm-4cf7).
     # bound_port is also stashed so /api/pty can build the back-WS URL the
     # PTY child uses to publish events to the dashboard sidebar.
+    # allow_public is required by the WebSocket gate so non-loopback binds
+    # explicitly approved via --insecure work consistently for /api/ws,
+    # /api/pty, /api/pub, and /api/events.
     app.state.bound_host = host
     app.state.bound_port = port
+    app.state.allow_public = bool(allow_public)
 
     if open_browser:
         import webbrowser
